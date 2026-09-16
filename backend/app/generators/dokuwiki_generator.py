@@ -4,12 +4,28 @@ from app.schemas.roteiro import AnaliseHU, CasoTeste
 
 KEYWORDS = ["Dado que", "Quando", "Então", "E"]
 
+TIPOS_TESTE = [
+    "Funcional",
+    "Integração",
+    "Performance",
+    "Aceitação",
+    "Usabilidade",
+    "Segurança",
+    "Outros",
+]
+
 
 def _aplicar_negrito(texto: str) -> str:
+    """Aplica negrito duplo APENAS na palavra-chave inicial."""
     texto = texto.strip()
-    for kw in KEYWORDS:
-        if texto.startswith(kw):
-            return "**" + kw + "**" + texto[len(kw):]
+
+    for kw in ["Dado que", "Quando", "Então"]:
+        if texto.startswith(kw + " "):
+            return f"**{kw}**" + texto[len(kw):]
+
+    if texto == "E" or texto.startswith("E "):
+        return "**E**" + texto[1:]
+
     return texto
 
 
@@ -23,6 +39,12 @@ def _sanitizar(texto: str, max_len: int = 1500) -> str:
     return texto
 
 
+def _capitalizar(texto: str) -> str:
+    if not texto or texto == "N/A":
+        return texto
+    return texto[0].upper() + texto[1:]
+
+
 def _formatar_link(url: str, texto: str = "") -> str:
     url = (url or "").strip()
     if not url or url.upper() == "N/A":
@@ -33,16 +55,33 @@ def _formatar_link(url: str, texto: str = "") -> str:
 
 
 def _formatar_linhas_dokuwiki(linhas: list, separador_final: str) -> str:
-    """Junta linhas com ' \\\\ ' (quebra DokuWiki) e pontuação."""
+    """
+    Junta linhas com ' \\\\ ' (quebra DokuWiki).
+    Corrige bug de vírgula duplicada após ':' e de falta de espaço em '**E**m'.
+    """
     if not linhas:
         return ""
+
     processadas = [_aplicar_negrito(l) for l in linhas]
+
     saida = ""
     for i, linha in enumerate(processadas):
-        if i < len(processadas) - 1:
-            saida += linha.rstrip(".,") + ", \\\\ "
+        linha_limpa = linha.strip()
+        ultima = (i == len(processadas) - 1)
+
+        if ultima:
+            if linha_limpa.endswith(":"):
+                saida += linha_limpa + separador_final
+            elif linha_limpa.endswith((".", "!", "?")):
+                saida += linha_limpa
+            else:
+                saida += linha_limpa + separador_final
         else:
-            saida += linha.rstrip(".,") + separador_final
+            if linha_limpa.endswith(":"):
+                saida += linha_limpa + " \\\\ "
+            else:
+                saida += linha_limpa.rstrip(".,;") + ", \\\\ "
+
     return saida
 
 
@@ -63,19 +102,25 @@ def _gerar_ct_dokuwiki(ct: CasoTeste, idx: int) -> str:
 
 
 def gerar_dokuwiki(analise: AnaliseHU, meta: dict = None) -> str:
-    meta = meta or {}
     num_cts = len(analise.casos_teste)
 
-    # Metadados
     identificacao = _sanitizar(analise.identificacao_alm) or "(a preencher)"
     link_hu = _formatar_link(analise.link_hu)
     link_sistema = _formatar_link(analise.link_sistema)
-    usuario_senha = _sanitizar(meta.get("usuario_senha", "(a preencher)"))
+    usuario_senha = _sanitizar(analise.usuario_senha) or "(a preencher)"
     objetivo = _sanitizar(analise.objetivo, max_len=1000)
-    pre_condicao = _sanitizar(analise.pre_condicao, max_len=500)
+    pre_condicao = _capitalizar(_sanitizar(analise.pre_condicao, max_len=500))
 
-    tipo_demanda = meta.get("tipo_demanda", "Nova funcionalidade")
-    tipo_teste = meta.get("tipo_teste", "Funcional")
+    # Tipo de Demanda
+    tipo_demanda = (analise.tipo_demanda or "Nova funcionalidade").strip()
+    if tipo_demanda == "Outros":
+        extra = _sanitizar(analise.tipo_demanda_outros or "")
+        tipo_demanda_txt = f"Outros, especificar: {extra}" if extra else "Outros, especificar"
+    else:
+        tipo_demanda_txt = tipo_demanda
+
+       # Tipo de Teste
+    tipo_teste = (analise.tipo_teste_sugerido or "Funcional").strip()
 
     cts = "\n\n".join(_gerar_ct_dokuwiki(ct, i + 1) for i, ct in enumerate(analise.casos_teste))
 
@@ -86,7 +131,7 @@ def gerar_dokuwiki(analise: AnaliseHU, meta: dict = None) -> str:
 ^ Identificação do ALM | {identificacao} |
 ^ Link do sistema/Funcionalidade | {link_sistema} |
 ^ Usuário e senha | {usuario_senha} |
-^ Tipo de Demanda | {tipo_demanda} |
+^ Tipo de Demanda | {tipo_demanda_txt} |
 ^ Tipo de Teste | {tipo_teste} |
 ^ História de Usuário: | {link_hu} |
 ^ Objetivo e prioridades | {objetivo} |

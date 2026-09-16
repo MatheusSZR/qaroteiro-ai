@@ -16,10 +16,21 @@ TIPOS_TESTE = [
 
 
 def _aplicar_negrito(texto: str) -> str:
+    """
+    Aplica negrito APENAS na palavra-chave inicial.
+    Corrige bug de "Em admissão" começar com "E".
+    """
     texto = texto.strip()
-    for kw in KEYWORDS:
-        if texto.startswith(kw):
-            return "*" + kw + "*" + texto[len(kw):]
+
+    # Ordem importa: verifica os mais longos primeiro
+    for kw in ["Dado que", "Quando", "Então"]:
+        if texto.startswith(kw + " "):
+            return f"*{kw}*" + texto[len(kw):]
+
+    # "E" só vale se for a palavra isolada (seguida de espaço ou fim)
+    if texto == "E" or texto.startswith("E "):
+        return "*E*" + texto[1:]
+
     return texto
 
 
@@ -34,16 +45,45 @@ def _sanitizar_para_celula(texto: str, max_len: int = 1500) -> str:
     return texto
 
 
+def _capitalizar(texto: str) -> str:
+    """Coloca a primeira letra em maiúscula se ainda não estiver."""
+    if not texto or texto == "N/A":
+        return texto
+    return texto[0].upper() + texto[1:]
+
+
 def _formatar_linhas(linhas: list, separador_final: str) -> str:
+    """
+    Junta as linhas com vírgula no final (exceto a última, que usa separador_final).
+    Corrige bug de vírgula duplicada após ':' e de falta de espaço em '*E*m'.
+    """
     if not linhas:
         return ""
+
     processadas = [_aplicar_negrito(l) for l in linhas]
+
     saida = ""
     for i, linha in enumerate(processadas):
-        if i < len(processadas) - 1:
-            saida += linha.rstrip(".,") + ",\n"
+        linha_limpa = linha.strip()
+        ultima = (i == len(processadas) - 1)
+
+        if ultima:
+            # Última linha: aplica separador_final (ponto, geralmente)
+            # Se termina em ':' não coloca ponto, senão fica "::."
+            if linha_limpa.endswith(":"):
+                saida += linha_limpa + separador_final
+            elif linha_limpa.endswith((".", "!", "?")):
+                saida += linha_limpa
+            else:
+                saida += linha_limpa + separador_final
         else:
-            saida += linha.rstrip(".,") + separador_final
+            # Linha intermediária: aplica vírgula
+            # Se termina em ':' → NÃO coloca vírgula (evita "':,'")
+            if linha_limpa.endswith(":"):
+                saida += linha_limpa + "\n"
+            else:
+                saida += linha_limpa.rstrip(".,;") + ",\n"
+
     return saida
 
 
@@ -74,16 +114,21 @@ def gerar_jira_wiki(analise: AnaliseHU, meta: dict = None) -> str:
     usuario_senha = _sanitizar_para_celula(meta.get("usuario_senha", "(a preencher)"))
 
     objetivo_sanit = _sanitizar_para_celula(analise.objetivo, max_len=1000)
-    pre_cond_sanit = _sanitizar_para_celula(analise.pre_condicao, max_len=500)
+    pre_cond_sanit = _capitalizar(_sanitizar_para_celula(analise.pre_condicao, max_len=500))
 
     # Tipo de Demanda
     tipo_demanda = meta.get("tipo_demanda", "Nova funcionalidade")
+    tipo_demanda_outros = _sanitizar_para_celula(meta.get("tipo_demanda_outros", ""))
     td_melhoria = "(/)" if tipo_demanda == "Melhoria" else "(x)"
     td_nova = "(/)" if tipo_demanda == "Nova funcionalidade" else "(x)"
-    td_outros = "(/)" if tipo_demanda not in ["Melhoria", "Nova funcionalidade"] else "(x)"
+    td_outros_marcado = "(/)" if tipo_demanda == "Outros" else "(x)"
+    if tipo_demanda == "Outros" and tipo_demanda_outros:
+        td_outros_txt = f"{td_outros_marcado} Outros, especificar: {tipo_demanda_outros}"
+    else:
+        td_outros_txt = f"{td_outros_marcado} Outros, especificar"
 
-    # Tipo de Teste — lista dinâmica
-    tipo_teste_ativo = meta.get("tipo_teste", "Funcional")
+    # Tipo de Teste
+    tipo_teste_ativo = meta.get("tipo_teste") or analise.tipo_teste_sugerido or "Funcional"
     partes_teste = []
     for t in TIPOS_TESTE:
         marca = "(/)" if t == tipo_teste_ativo else "(x)"
@@ -96,7 +141,7 @@ def gerar_jira_wiki(analise: AnaliseHU, meta: dict = None) -> str:
 ||Identificação do ALM|{identificacao}|
 ||Link do sistema/Funcionalidade|{link_sistema}|
 ||Usuário e senha|{usuario_senha}|
-||Tipo de Demanda|{td_melhoria} Melhoria | {td_nova} Nova funcionalidade | {td_outros} Outros, especificar|
+||Tipo de Demanda|{td_melhoria} Melhoria | {td_nova} Nova funcionalidade | {td_outros_txt}|
 ||Tipo de Teste|{tt_linha}|
 ||História de Usuário:|{link_hu}|
 ||Objetivo e prioridades|{objetivo_sanit}|

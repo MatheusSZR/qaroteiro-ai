@@ -42,6 +42,10 @@ class AnaliseHU(BaseModel):
     nome_historia: str = ""
     link_hu: str = ""
     link_sistema: str = ""
+    usuario_senha: str = ""
+    tipo_demanda: str = "Nova funcionalidade"
+    tipo_demanda_outros: str = ""
+    tipo_teste_sugerido: str = "Funcional"       # ← campo adicionado
     objetivo: str = "N/A"
     pre_condicao: str = "N/A"
     cenarios_hu: List[str] = []
@@ -84,11 +88,6 @@ class HistoricoDetalhe(BaseModel):
     validacao: Optional[Dict[str, Any]] = None
 
 
-class RegenerateInput(BaseModel):
-    analise: AnaliseHU
-    hu_original: str = ""
-    meta: Dict[str, Any] = {}
-
 class ConfiguracaoResponse(BaseModel):
     modelo: str = "openai/gpt-oss-120b"
     temperatura: float = 0.1
@@ -99,3 +98,9 @@ class ConfiguracaoUpdate(BaseModel):
     modelo: Optional[str] = None
     temperatura: Optional[float] = None
     max_tokens: Optional[int] = None
+
+
+class RegenerateInput(BaseModel):
+    analise: AnaliseHU
+    hu_original: str = ""
+    meta: Dict[str, Any] = {}

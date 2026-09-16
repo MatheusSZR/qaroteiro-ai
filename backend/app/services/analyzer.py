@@ -41,11 +41,15 @@ class AnalyzerService:
             for i, ct in enumerate(casos_teste, start=1):
                 ct.id = f"CT-{i:02d}"
 
-                analise = AnaliseHU(
+            analise = AnaliseHU(
                 identificacao_alm=para_string(dados.get("identificacao_alm", "")),
                 nome_historia=para_string(dados.get("nome_historia", "")),
                 link_hu=para_string(dados.get("link_hu", "")),
                 link_sistema=para_string(dados.get("link_sistema", "")),
+                usuario_senha=para_string(dados.get("usuario_senha", "")),
+                tipo_demanda=para_string(dados.get("tipo_demanda", "Nova funcionalidade")),
+                tipo_demanda_outros=para_string(dados.get("tipo_demanda_outros", "")),
+                tipo_teste_sugerido=para_string(dados.get("tipo_teste", "Funcional")),
                 objetivo=para_string(dados.get("objetivo", "N/A")),
                 pre_condicao=para_string(dados.get("pre_condicao", "N/A")),
                 cenarios_hu=dados.get("cenarios_hu", []) if isinstance(dados.get("cenarios_hu"), list) else [],
@@ -58,7 +62,6 @@ class AnalyzerService:
 
             jira_wiki = gerar_jira_wiki(analise)
             dokuwiki = gerar_dokuwiki(analise)
-
             resultado_validacao = validar(analise, texto, jira_wiki)
 
             return AnalyzeResponse(
@@ -79,7 +82,7 @@ class AnalyzerService:
             )
 
     def _montar_prompt(self, texto: str) -> str:
-        return f"""Você é um engenheiro de QA sênior. Sua tarefa é analisar uma História de Usuário (HU) e produzir um JSON estruturado com metadados e casos de teste.
+        return f"""Você é um engenheiro de QA sênior. Sua tarefa é analisar uma História de Usuário (HU) e produzir um JSON estruturado.
 
 ═══════════════════════════════════════════════
 REGRA SUPREMA — NÃO INVENTAR
@@ -89,46 +92,86 @@ NUNCA invente:
 - Cenários que não estão explicitamente escritos.
 - Valores, datas, mensagens ou campos que não aparecem.
 
-Se a HU não descreve o comportamento esperado de uma situação, NÃO CRIE CT para essa situação.
+═══════════════════════════════════════════════
+REGRA Nº1 — COBERTURA OBRIGATÓRIA (LEIA COM ATENÇÃO)
+═══════════════════════════════════════════════
+VOCÊ DEVE gerar um CT para CADA UM destes itens que a HU apresentar:
+
+(A) CADA bloco "Dado que... / Quando... / Então..." encontrado na HU → 1 CT cada
+    → fluxo = "Cenário feliz"
+    → Contar os blocos: se a HU tem 2 blocos Dado/Quando/Então, você DEVE gerar 2 CTs.
+
+(B) CADA RN (RN001, RN002, ...) listada na seção "Regras gerais" ou "Regras de negócio" → 1 CT cada
+    → fluxo = "Regra de negócio"
+    → Só crie esses CTs para RNs listadas SEPARADAMENTE (não basta aparecer no texto).
+
+(C) CADA campo crítico das tabelas (com RN, máscara, obrigatoriedade) → 1 CT agrupado por afinidade.
+
+(D) CADA mensagem explícita do sistema → 1 CT.
+
+EXEMPLO CONCRETO:
+    HU tem: 2 blocos "Dado/Quando/Então" + 2 RNs listadas + 17 campos na tabela
+    → Mínimo de CTs a gerar: 2 (blocos) + 2 (RNs) + 1-2 (campos agrupados) = 5 CTs
+    → Se você gerar apenas 1 CT, está ERRADO.
+
+REGRA CRÍTICA: Se a HU tem N blocos "Dado/Quando/Então", você DEVE retornar no mínimo N CTs. Nunca menos.
 
 ═══════════════════════════════════════════════
-REGRA DE COBERTURA OBRIGATÓRIA
+REGRA Nº2 — CLASSIFICAÇÃO DE FLUXO
 ═══════════════════════════════════════════════
-1. Cada bloco "Dado que... / Quando... / Então..." da HU vira EXATAMENTE 1 CT.
-2. Cada Regra de Negócio (RNxxx) que a HU descreve vira 1 CT.
-3. Cada campo crítico com RN/máscara/obrigatoriedade vira 1 CT (podendo agrupar).
-4. Cada mensagem do sistema descrita vira 1 CT.
+- "Cenário feliz": CT vem de um bloco "Dado/Quando/Então" DA HU (copie fielmente).
+- "Regra de negócio": CT vem de uma RN listada SEPARADAMENTE (sem bloco correspondente).
+- "Cenário negativo" / "Cenário alternativo": só se a HU descreve explicitamente.
+
+É PROIBIDO classificar um cenário explícito como "Regra de negócio". Se a HU já tem "Dado/Quando/Então", é "Cenário feliz" — ponto final.
+
+═══════════════════════════════════════════════
+REGRA Nº3 — CLASSIFICAÇÃO DO TIPO DE TESTE
+═══════════════════════════════════════════════
+Analise o CONTEÚDO da HU para escolher tipo_teste:
+
+- "Integração": envolve APIs, integração entre sistemas, consumo de tabelas/dados externos, mensageria, ETL, sincronização.
+- "Performance": envolve volume, tempo de resposta, carga, stress.
+- "Segurança": envolve autenticação, autorização, permissões, criptografia.
+- "Usabilidade": envolve UX, navegação, acessibilidade, layout.
+- "Aceitação": validação final com usuário/cliente.
+- "Funcional": lógica de negócio pura, funcionalidade isolada.
+- "Outros": não se encaixa em nenhum.
+
+Exemplos:
+    HU sobre "auth-api consumir tabela tank, integração entre sistemas" → "Integração"
+    HU sobre "criar tela de cadastro com campos X, Y, Z" → "Funcional"
+    HU sobre "gerar relatório e exibir dados" → "Funcional"
+    HU sobre "validar login e permissões de usuário" → "Segurança"
+
+═══════════════════════════════════════════════
+REGRA Nº4 — CAPITALIZAÇÃO E FORMATAÇÃO
+═══════════════════════════════════════════════
+- pre_condicao SEMPRE começa com letra maiúscula.
+- Passos começam com "Dado que", "E", "Quando".
+- Resultados começam com "Então", "E".
+- "Então" NUNCA aparece em Passos.
+- Listas em tópicos viram texto em linha única separado por vírgula.
+- Se a HU já tem o cenário, COPIE fielmente (não reescreva).
 
 ═══════════════════════════════════════════════
 PARTE 1 — METADADOS
 ═══════════════════════════════════════════════
-Extraia (se não encontrar, use "" ou "N/A"):
 - identificacao_alm: identificador bruto do ALM.
-- nome_historia: nome amigável da História de Usuário. Procure pelo campo "Nome" ou "NOME" da HU (ex: "Monitoramento Power BI Embedded"). Se não houver, deixe "".
-- link_hu: SOMENTE a URL da HU.
-- link_sistema: URL do sistema, se houver.
-- objetivo: fiel à HU, máx 2 linhas.
-- pre_condicao: o papel descrito no "Como [papel]" da HU. Se não houver, "N/A".
+- nome_historia: campo "Nome"/"NOME" da HU. Se não houver, "".
+- link_hu: SOMENTE a URL da HU. Não cole texto.
+- link_sistema: URL do sistema (só se for URL). Senão "N/A".
+- usuario_senha: só se a HU indica. Senão "".
+- tipo_demanda: "Melhoria", "Nova funcionalidade" ou "Outros".
+- tipo_demanda_outros: se tipo_demanda == "Outros", descreva. Senão "".
+- tipo_teste: ver REGRA Nº3.
+- objetivo: fiel à HU (o "Como/Quero/Para que"), máx 2 linhas.
+- pre_condicao: papel do "Como [papel]". Comece com maiúscula.
 - cenarios_hu: títulos curtos dos cenários EXPLÍCITOS.
 - prototipos: referência a protótipos, se houver.
 - tabelas: referência a tabelas, se houver.
 - mensagens: mensagens do sistema, se houver.
 - regras_negocio: RNs citadas na HU.
-
-═══════════════════════════════════════════════
-PARTE 2 — CASOS DE TESTE
-═══════════════════════════════════════════════
-CLASSIFICAÇÃO DE FLUXO:
-- "Cenário feliz": CT vem de bloco Dado/Quando/Então OU de campo/mensagem.
-- "Regra de negócio": CT vem de uma RN listada separadamente.
-- "Cenário alternativo" / "Cenário negativo": só se a HU descreve.
-
-REGRAS DE ESCRITA:
-- Passos começam com "Dado que", "E", "Quando".
-- Resultados começam com "Então", "E".
-- "Então" NUNCA em Passos.
-- Listas em tópicos viram texto em linha única com vírgula.
-- Se a HU já tem o cenário, COPIE fielmente.
 
 ═══════════════════════════════════════════════
 FORMATO DE RESPOSTA (apenas JSON)
@@ -138,6 +181,10 @@ FORMATO DE RESPOSTA (apenas JSON)
   "nome_historia": "",
   "link_hu": "",
   "link_sistema": "",
+  "usuario_senha": "",
+  "tipo_demanda": "Nova funcionalidade",
+  "tipo_demanda_outros": "",
+  "tipo_teste": "Funcional",
   "objetivo": "",
   "pre_condicao": "",
   "cenarios_hu": [],
